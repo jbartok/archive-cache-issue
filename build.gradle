@@ -1,0 +1,92 @@
+plugins {
+    id 'base'
+}
+
+abstract class UpdateTask extends DefaultTask {
+    @InputFile
+    abstract RegularFileProperty getArchive()
+
+    @Input
+    abstract Property<String> getReplacementText()
+
+    @Inject
+    abstract ArchiveOperations getArchiveOperations()
+
+    @TaskAction
+    void update() {
+        FileTree tree = archiveOperations.tarTree(archive.asFile.get())
+        tree.visit(new EditingFileVisitor())
+    }
+
+    private final class EditingFileVisitor implements FileVisitor {
+        @Override
+        void visitDir(FileVisitDetails dirDetails) {}
+
+        @Override
+        void visitFile(FileVisitDetails fileDetails) {
+            println "Updating $fileDetails"
+            print "\t BEFORE: ${fileDetails.file.text}"
+            fileDetails.file.text = fileDetails.file.text.replace('original', replacementText.get())
+            print "\t AFTER: ${fileDetails.file.text}"
+        }
+    }
+}
+
+abstract class VerifyTask extends DefaultTask {
+    @InputFile
+    abstract RegularFileProperty getArchive()
+
+    @Inject
+    abstract ArchiveOperations getArchiveOperations()
+
+    @TaskAction
+    void verify() {
+        FileTree tree = archiveOperations.tarTree(archive.asFile.get())
+        tree.visit(new VerifyingFileVisitor())
+    }
+
+    private final class VerifyingFileVisitor implements FileVisitor {
+        @Override
+        void visitDir(FileVisitDetails dirDetails) {}
+
+        @Override
+        void visitFile(FileVisitDetails fileDetails) {
+            println "Verifying $fileDetails"
+            println "\t IS: ${fileDetails.file.text}"
+        }
+    }
+}
+
+def createArchive = tasks.register('createArchive', Tar) {
+    from layout.projectDirectory.dir("content")
+    archiveFileName = "test1.tar"
+    destinationDirectory = layout.buildDirectory.dir('archives1')
+}
+
+def copyArchive = tasks.register('copyArchive', Copy) {
+    from createArchive
+    into layout.buildDirectory.dir("archives2")
+    rename '.+', 'test2.tar'
+}
+
+def update1 = tasks.register('update1', UpdateTask) {
+    dependsOn copyArchive
+    archive.set( createArchive.flatMap {it.archiveFile} )
+    replacementText = 'modification 1'
+}
+
+def update2 = tasks.register('update2', UpdateTask) {
+    dependsOn copyArchive
+    archive = layout.buildDirectory.dir('archives2').get().file("test2.tar")
+    replacementText = 'modification 2'
+}
+
+tasks.register('verify1', VerifyTask) {
+    dependsOn copyArchive
+    archive = layout.buildDirectory.dir('archives1').get().file("test1.tar")
+}
+
+tasks.register('verify2', VerifyTask) {
+    dependsOn copyArchive
+    archive = layout.buildDirectory.dir('archives2').get().file("test2.tar")
+}
